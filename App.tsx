@@ -4,7 +4,7 @@ import {
   Menu, Pickaxe, TestTube, Swords, Activity, Users, Hammer, Plus, 
   ChevronRight, Beaker, Dna, Trophy, AlertCircle, Map as MapIcon, Shield,
   Key, Flag, HandCoins, UserPlus, Flame, Leaf, TrendingUp, TrendingDown, DollarSign,
-  Building2, Trash2, X, HelpCircle, RefreshCw, Scroll, Sparkles, BookOpen, Settings, ArrowUpCircle, PawPrint, Radar, Crosshair, Clock, Crown, Heart, Skull, BarChart3, Medal, ChevronDown, ChevronUp, Globe
+  Building2, Trash2, X, HelpCircle, RefreshCw, Scroll, Sparkles, BookOpen, Settings, ArrowUpCircle, PawPrint, Radar, Crosshair, Clock, Crown, Heart, Skull, BarChart3, Medal, ChevronDown, ChevronUp, Globe, Egg, Wrench, Star
 } from 'lucide-react';
 
 import ResourceBar from './components/ResourceBar';
@@ -13,10 +13,10 @@ import HexMap from './components/HexMap';
 import RulesModal from './components/RulesModal';
 import SettingsModal from './components/SettingsModal';
 import { 
-  Building, ElementType, FactionId, GameState, Monster, Resources, Stats, LogEntry, HexTile, BiomeType, Staff, Spell, GameSettings, Trophy as TrophyType, BattleLog, FactionStats, BattleRecord, Tournament, TournamentMatch, TournamentParticipant
+  Building, ElementType, FactionId, GameState, Monster, Resources, Stats, LogEntry, HexTile, BiomeType, Staff, Spell, GameSettings, Trophy as TrophyType, BattleLog, FactionStats, BattleRecord, Tournament, TournamentMatch, TournamentParticipant, Egg as EggType, BodyPart
 } from './types';
 import { 
-  INITIAL_RESOURCES, FACTION_BONUSES, BUILDINGS_CATALOG, ELEMENT_COLORS, MAP_RADIUS, COSTS, getHexNeighborCoords, getHexId, ANATOMY_PARTS, REFUND_RATE, EXCHANGE_RATES, SPELLS, CAPTURE_CHANCE, SALARIES, TROPHIES, TYPE_CHART, ANATOMY_MODIFIERS, RIVAL_NAMES
+  INITIAL_RESOURCES, FACTION_BONUSES, BUILDINGS_CATALOG, ELEMENT_COLORS, MAP_RADIUS, COSTS, getHexNeighborCoords, getHexId, ANATOMY_PARTS, REFUND_RATE, EXCHANGE_RATES, SPELLS, CAPTURE_CHANCE, SALARIES, TROPHIES, TYPE_CHART, ANATOMY_MODIFIERS, RIVAL_NAMES, XP_CONSTANTS, EGG_CONSTANTS, BODY_PART_WEIGHT, MATERIAL_EFFECTIVENESS, BODY_PARTS_CATALOG
 } from './constants';
 import * as GeminiService from './services/geminiService';
 
@@ -33,7 +33,7 @@ type Action =
   | { type: 'CLEAR_LOGS' }
   | { type: 'TRAIN_MONSTER'; payload: { id: string; stat: keyof Stats; cost: Partial<Resources> } }
   | { type: 'HEAL_ALL'; payload: { cost: number } }
-  | { type: 'EXPLORE_HEX'; payload: { hexId: string; reward: Partial<Resources>; wildMonster?: Monster } }
+  | { type: 'EXPLORE_HEX'; payload: { hexId: string; reward: Partial<Resources>; wildMonster?: Monster; egg?: EggType } }
   | { type: 'CLAIM_HEX'; payload: { hexId: string; cost: number } }
   | { type: 'SABOTAGE_HEX'; payload: { hexId: string; cost: number } }
   | { type: 'INIT_MAP'; payload: Record<string, HexTile> }
@@ -50,7 +50,16 @@ type Action =
   | { type: 'START_BATTLE'; payload: { playerMonsterId: string; opponent: Monster } }
   | { type: 'NEXT_ROUND'; payload: { playerAction: string } } 
   | { type: 'END_BATTLE'; payload: { won: boolean } }
-  | { type: 'RESET_BATTLE' };
+  | { type: 'RESET_BATTLE' }
+  // New Chimera Enhancement Actions
+  | { type: 'DISCOVER_EGG'; payload: { egg: EggType } }
+  | { type: 'INCUBATE_EGG'; payload: { eggId: string } }
+  | { type: 'HATCH_EGG'; payload: { eggId: string; monster: Monster } }
+  | { type: 'SPEND_XP_LEVEL'; payload: { monsterId: string } }
+  | { type: 'SPEND_XP_ENHANCE'; payload: { monsterId: string; stat: keyof Stats } }
+  | { type: 'ADD_BODY_PART'; payload: { monsterId: string; bodyPart: BodyPart; cost: Partial<Resources> } }
+  | { type: 'REMOVE_BODY_PART'; payload: { monsterId: string; bodyPartId: string; cost: Partial<Resources> } }
+  | { type: 'ENHANCE_BODY_PART'; payload: { monsterId: string; bodyPartId: string; cost: Partial<Resources> } };
 
 // --- Helper: Map Generation ---
 const generateMap = (radius: number, playerFaction: FactionId | null): Record<string, HexTile> => {
@@ -133,6 +142,7 @@ const initialState: GameState = {
   resources: INITIAL_RESOURCES,
   monsters: [],
   wildMonsters: [],
+  eggs: [],
   buildings: [],
   staff: [],
   logs: [],
@@ -153,14 +163,44 @@ const initialState: GameState = {
   tournament: initialTournament
 };
 
+// --- Helper: Calculate Monster Weight ---
+const calculateMonsterWeight = (monster: Monster): number => {
+    return monster.bodyParts?.reduce((acc, part) => acc + part.weight, 0) || 0;
+};
+
+// --- Helper: Get Max Weight for Monster ---
+const getMaxWeight = (monster: Monster): number => {
+    return (monster.size || 5) * BODY_PART_WEIGHT.MAX_WEIGHT_PER_SIZE;
+};
+
+// --- Helper: Calculate Weight Penalty ---
+const calculateWeightPenalty = (monster: Monster): number => {
+    const currentWeight = calculateMonsterWeight(monster);
+    const maxWeight = getMaxWeight(monster);
+    if (currentWeight <= maxWeight) return 0;
+    return (currentWeight - maxWeight) * BODY_PART_WEIGHT.SPEED_PENALTY_PER_EXCESS;
+};
+
+// --- Helper: Calculate XP Required for Level ---
+const getXpForLevel = (level: number): number => {
+    return level * XP_CONSTANTS.XP_PER_LEVEL;
+};
+
 // --- Helper Logic for Battle ---
-const calculateDamage = (attacker: Monster, defender: Monster): { damage: number; isCrit: boolean; isEffective: boolean; message: string } => {
+const calculateDamage = (attacker: Monster, defender: Monster): { damage: number; isCrit: boolean; isEffective: boolean; materialBonus: boolean; materialPenalty: boolean; message: string } => {
     // 1. Base Damage
     // Apply Buffs
     const getBuff = (m: Monster, stat: keyof Stats) => m.activeBuffs?.filter(b => b.stat === stat).reduce((a,b) => a + b.value, 0) || 0;
     
-    const atk = attacker.stats.attack + getBuff(attacker, 'attack');
-    const def = defender.stats.defense + getBuff(defender, 'defense');
+    // Apply body part stat bonuses
+    const getBodyPartBonus = (m: Monster, stat: keyof Stats) => 
+        m.bodyParts?.reduce((acc, part) => acc + (part.statBonus[stat] || 0), 0) || 0;
+    
+    // Apply weight penalty to speed
+    const attackerSpeedPenalty = calculateWeightPenalty(attacker);
+    
+    const atk = attacker.stats.attack + getBuff(attacker, 'attack') + getBodyPartBonus(attacker, 'attack');
+    const def = defender.stats.defense + getBuff(defender, 'defense') + getBodyPartBonus(defender, 'defense');
     
     let baseDmg = Math.max(5, (atk * 0.5) - (def * 0.25));
 
@@ -171,7 +211,41 @@ const calculateDamage = (attacker: Monster, defender: Monster): { damage: number
         isEffective = true;
     }
 
-    // 3. Anatomy Modifiers (Appendages & Trunk)
+    // 3. Body Part Material Effectiveness
+    let materialBonus = false;
+    let materialPenalty = false;
+    const attackerOffenseParts = attacker.bodyParts?.filter(p => p.category === 'offense') || [];
+    const defenderDefenseParts = defender.bodyParts?.filter(p => p.category === 'defense') || [];
+    
+    if (attackerOffenseParts.length > 0 && defenderDefenseParts.length > 0) {
+        // Calculate average material effectiveness
+        let totalEffectiveness = 0;
+        let comparisons = 0;
+        
+        attackerOffenseParts.forEach(atkPart => {
+            defenderDefenseParts.forEach(defPart => {
+                totalEffectiveness += MATERIAL_EFFECTIVENESS[atkPart.material]?.[defPart.material] || 1.0;
+                comparisons++;
+            });
+        });
+        
+        const avgEffectiveness = comparisons > 0 ? totalEffectiveness / comparisons : 1.0;
+        if (avgEffectiveness > 1.05) {
+            baseDmg *= avgEffectiveness;
+            materialBonus = true;
+        } else if (avgEffectiveness < 0.95) {
+            baseDmg *= avgEffectiveness;
+            materialPenalty = true;
+        }
+    }
+
+    // 4. Elemental Body Part Synergy - parts matching attacker element boost damage
+    const elementalParts = attacker.bodyParts?.filter(p => p.element === attacker.element) || [];
+    if (elementalParts.length > 0) {
+        baseDmg *= 1 + (elementalParts.length * 0.05); // +5% per matching elemental part
+    }
+
+    // 5. Anatomy Modifiers (Appendages & Trunk)
     let anatomyMsg = "strikes";
     let critChance = 0.05;
     
@@ -185,15 +259,15 @@ const calculateDamage = (attacker: Monster, defender: Monster): { damage: number
         }
     });
 
-    // 4. Critical Hit
+    // 6. Critical Hit
     const isCrit = Math.random() < critChance;
     if (isCrit) baseDmg *= 1.5;
 
-    // 5. Random Variance
+    // 7. Random Variance
     const variance = (Math.random() * 0.2) + 0.9; // 0.9 to 1.1
     const finalDmg = Math.floor(baseDmg * variance);
 
-    return { damage: finalDmg, isCrit, isEffective, message: anatomyMsg };
+    return { damage: finalDmg, isCrit, isEffective, materialBonus, materialPenalty, message: anatomyMsg };
 };
 
 // --- Tournament Generation Logic ---
@@ -478,6 +552,22 @@ const gameReducer = (state: GameState, action: Action): GameState => {
          if (action.payload.reward.biomass) exploredRes.biomass += action.payload.reward.biomass;
          if (action.payload.reward.mana) exploredRes.mana += action.payload.reward.mana;
          
+         const exploreLogs = [{
+             id: Date.now(),
+             timestamp: new Date().toLocaleTimeString(),
+             message: `Sector [${action.payload.hexId}] explored.`,
+             type: 'info' as const
+         }];
+         
+         if (action.payload.egg) {
+             exploreLogs.push({
+                 id: Date.now() + 1,
+                 timestamp: new Date().toLocaleTimeString(),
+                 message: `Discovered a ${action.payload.egg.element} Egg! It can be incubated in the Lab.`,
+                 type: 'discovery' as const
+             });
+         }
+         
          return {
              ...state,
              resources: exploredRes,
@@ -489,7 +579,9 @@ const gameReducer = (state: GameState, action: Action): GameState => {
                      wildMonsterId: action.payload.wildMonster?.id
                  }
              },
-             wildMonsters: action.payload.wildMonster ? [...state.wildMonsters, action.payload.wildMonster] : state.wildMonsters
+             wildMonsters: action.payload.wildMonster ? [...state.wildMonsters, action.payload.wildMonster] : state.wildMonsters,
+             eggs: action.payload.egg ? [...state.eggs, action.payload.egg] : state.eggs,
+             logs: [...exploreLogs, ...state.logs]
          };
     
     case 'SABOTAGE_HEX':
@@ -786,6 +878,8 @@ const gameReducer = (state: GameState, action: Action): GameState => {
         });
         if (hit1.isCrit) logs.push({ round: state.battle.round, message: "Critical Hit!", type: 'info' });
         if (hit1.isEffective) logs.push({ round: state.battle.round, message: "Super Effective!", type: 'info' });
+        if (hit1.materialBonus) logs.push({ round: state.battle.round, message: "Material Advantage!", type: 'effect' });
+        if (hit1.materialPenalty) logs.push({ round: state.battle.round, message: "Material Disadvantage!", type: 'effect' });
 
         // Check Death Turn 1
         if (hpAfterHit1 <= 0) {
@@ -820,6 +914,8 @@ const gameReducer = (state: GameState, action: Action): GameState => {
         });
         if (hit2.isCrit) logs.push({ round: state.battle.round, message: "Critical Hit!", type: 'info' });
         if (hit2.isEffective) logs.push({ round: state.battle.round, message: "Super Effective!", type: 'info' });
+        if (hit2.materialBonus) logs.push({ round: state.battle.round, message: "Material Advantage!", type: 'effect' });
+        if (hit2.materialPenalty) logs.push({ round: state.battle.round, message: "Material Disadvantage!", type: 'effect' });
 
         // Check Death Turn 2
         if (hpAfterHit2 <= 0) {
@@ -860,9 +956,22 @@ const gameReducer = (state: GameState, action: Action): GameState => {
         let newTrophy: TrophyType | undefined = undefined;
         let rewardText = "";
 
-        // Remove buffs from player monster
+        // Calculate XP gain
+        const opponentLevel = state.battle.opponentMonster?.level || 1;
+        const xpGained = action.payload.won 
+            ? XP_CONSTANTS.WIN_BASE + (opponentLevel * XP_CONSTANTS.LEVEL_BONUS)
+            : XP_CONSTANTS.LOSS_BASE;
+
+        // Remove buffs from player monster AND add XP
         const resetMonsters = state.monsters.map(m => {
-            if (m.id === state.battle.playerMonsterId) return { ...m, activeBuffs: [] };
+            if (m.id === state.battle.playerMonsterId) {
+                return { 
+                    ...m, 
+                    activeBuffs: [],
+                    xp: (m.xp || 0) + xpGained,
+                    experience: (m.experience || 0) + xpGained
+                };
+            }
             return m;
         });
 
@@ -944,7 +1053,7 @@ const gameReducer = (state: GameState, action: Action): GameState => {
             rewardCredits = 150 + (state.battle.round * 10);
             if (finalTournamentWin) rewardCredits += 1000; // Grand Prize
             
-            rewardText = `${rewardCredits} Credits`;
+            rewardText = `${rewardCredits} Credits, +${xpGained} XP`;
             
             // Trophy Logic (Only on tournament win)
             if (finalTournamentWin) {
@@ -958,7 +1067,7 @@ const gameReducer = (state: GameState, action: Action): GameState => {
                 }
             }
         } else {
-            rewardText = "None";
+            rewardText = `+${xpGained} XP (consolation)`;
         }
 
         // Update History & Stats
@@ -982,8 +1091,10 @@ const gameReducer = (state: GameState, action: Action): GameState => {
         }
 
         // Log Message
-        let logMsg = action.payload.won ? `Match Won! Earned ${rewardCredits} Credits.` : `Match Lost. Specimen injured.`;
-        if (finalTournamentWin) logMsg = `TOURNAMENT CHAMPION! Grand Prize Awarded: ${rewardCredits} Credits.`;
+        let logMsg = action.payload.won 
+            ? `Match Won! Earned ${rewardCredits} Credits and ${xpGained} XP.` 
+            : `Match Lost. Specimen injured but gained ${xpGained} XP.`;
+        if (finalTournamentWin) logMsg = `TOURNAMENT CHAMPION! Grand Prize Awarded: ${rewardCredits} Credits and ${xpGained} XP.`;
 
         return {
             ...state,
@@ -1005,6 +1116,187 @@ const gameReducer = (state: GameState, action: Action): GameState => {
                 message: logMsg,
                 type: action.payload.won ? 'success' : 'alert'
             }]
+        };
+
+    // --- New Chimera Enhancement Actions ---
+    case 'DISCOVER_EGG':
+        return {
+            ...state,
+            eggs: [...state.eggs, action.payload.egg],
+            logs: [{
+                id: Date.now(),
+                timestamp: new Date().toLocaleTimeString(),
+                message: `Discovered a ${action.payload.egg.element} Egg! Quality: ${action.payload.egg.quality}%`,
+                type: 'discovery'
+            }, ...state.logs]
+        };
+
+    case 'HATCH_EGG':
+        return {
+            ...state,
+            eggs: state.eggs.filter(e => e.id !== action.payload.eggId),
+            monsters: [...state.monsters, action.payload.monster],
+            logs: [{
+                id: Date.now(),
+                timestamp: new Date().toLocaleTimeString(),
+                message: `Egg hatched! ${action.payload.monster.name} has emerged.`,
+                type: 'success'
+            }, ...state.logs]
+        };
+
+    case 'SPEND_XP_LEVEL':
+        const monsterToLevel = state.monsters.find(m => m.id === action.payload.monsterId);
+        if (!monsterToLevel) return state;
+        
+        const xpNeeded = getXpForLevel(monsterToLevel.level + 1);
+        if ((monsterToLevel.xp || 0) < xpNeeded) return state;
+
+        return {
+            ...state,
+            monsters: state.monsters.map(m => {
+                if (m.id === action.payload.monsterId) {
+                    const newLevel = m.level + 1;
+                    return {
+                        ...m,
+                        level: newLevel,
+                        xp: (m.xp || 0) - xpNeeded,
+                        maxHp: m.maxHp + 10,
+                        currentHp: Math.min(m.currentHp + 10, m.maxHp + 10),
+                        stats: {
+                            attack: m.stats.attack + 2,
+                            defense: m.stats.defense + 2,
+                            speed: m.stats.speed + 2,
+                            intelligence: m.stats.intelligence + 2
+                        }
+                    };
+                }
+                return m;
+            }),
+            logs: [{
+                id: Date.now(),
+                timestamp: new Date().toLocaleTimeString(),
+                message: `${monsterToLevel.name} leveled up to Level ${monsterToLevel.level + 1}!`,
+                type: 'success'
+            }, ...state.logs]
+        };
+
+    case 'SPEND_XP_ENHANCE':
+        const monsterToEnhance = state.monsters.find(m => m.id === action.payload.monsterId);
+        if (!monsterToEnhance) return state;
+        if ((monsterToEnhance.xp || 0) < XP_CONSTANTS.ENHANCEMENT_COST) return state;
+
+        return {
+            ...state,
+            monsters: state.monsters.map(m => {
+                if (m.id === action.payload.monsterId) {
+                    return {
+                        ...m,
+                        xp: (m.xp || 0) - XP_CONSTANTS.ENHANCEMENT_COST,
+                        stats: {
+                            ...m.stats,
+                            [action.payload.stat]: m.stats[action.payload.stat] + 3
+                        }
+                    };
+                }
+                return m;
+            }),
+            logs: [{
+                id: Date.now(),
+                timestamp: new Date().toLocaleTimeString(),
+                message: `${monsterToEnhance.name}'s ${action.payload.stat} enhanced by 3!`,
+                type: 'success'
+            }, ...state.logs]
+        };
+
+    case 'ADD_BODY_PART':
+        return {
+            ...state,
+            resources: {
+                ...state.resources,
+                mana: state.resources.mana - (action.payload.cost.mana || 0),
+                research: state.resources.research - (action.payload.cost.research || 0)
+            },
+            monsters: state.monsters.map(m => {
+                if (m.id === action.payload.monsterId) {
+                    return {
+                        ...m,
+                        bodyParts: [...(m.bodyParts || []), action.payload.bodyPart]
+                    };
+                }
+                return m;
+            }),
+            logs: [{
+                id: Date.now(),
+                timestamp: new Date().toLocaleTimeString(),
+                message: `Added ${action.payload.bodyPart.name} to chimera.`,
+                type: 'success'
+            }, ...state.logs]
+        };
+
+    case 'REMOVE_BODY_PART':
+        return {
+            ...state,
+            resources: {
+                ...state.resources,
+                mana: state.resources.mana - (action.payload.cost.mana || 0)
+            },
+            monsters: state.monsters.map(m => {
+                if (m.id === action.payload.monsterId) {
+                    return {
+                        ...m,
+                        bodyParts: (m.bodyParts || []).filter(p => p.id !== action.payload.bodyPartId)
+                    };
+                }
+                return m;
+            }),
+            logs: [{
+                id: Date.now(),
+                timestamp: new Date().toLocaleTimeString(),
+                message: `Removed body part from chimera.`,
+                type: 'info'
+            }, ...state.logs]
+        };
+
+    case 'ENHANCE_BODY_PART':
+        return {
+            ...state,
+            resources: {
+                ...state.resources,
+                research: state.resources.research - (action.payload.cost.research || 0)
+            },
+            monsters: state.monsters.map(m => {
+                if (m.id === action.payload.monsterId) {
+                    return {
+                        ...m,
+                        bodyParts: (m.bodyParts || []).map(p => {
+                            if (p.id === action.payload.bodyPartId) {
+                                // Enhance all stat bonuses by 50%, with minimum +1 improvement
+                                const enhancedBonus: Partial<Stats> = {};
+                                (Object.keys(p.statBonus) as (keyof Stats)[]).forEach(stat => {
+                                    const currentValue = p.statBonus[stat] || 0;
+                                    if (currentValue > 0) {
+                                        enhancedBonus[stat] = Math.max(currentValue + 1, Math.floor(currentValue * 1.5));
+                                    } else if (currentValue < 0) {
+                                        // Reduce penalties by 25% (make them less severe)
+                                        enhancedBonus[stat] = Math.ceil(currentValue * 0.75);
+                                    } else {
+                                        enhancedBonus[stat] = 0;
+                                    }
+                                });
+                                return { ...p, statBonus: enhancedBonus };
+                            }
+                            return p;
+                        })
+                    };
+                }
+                return m;
+            }),
+            logs: [{
+                id: Date.now(),
+                timestamp: new Date().toLocaleTimeString(),
+                message: `Enhanced body part capabilities!`,
+                type: 'success'
+            }, ...state.logs]
         };
 
     default:
@@ -1263,6 +1555,7 @@ export default function App() {
             element,
             level: 1,
             experience: 0,
+            xp: 0,
             stats: baseStats,
             maxHp: 50 + baseStats.defense * 2,
             currentHp: 50 + baseStats.defense * 2,
@@ -1272,7 +1565,9 @@ export default function App() {
                 trunk: ANATOMY_PARTS.TRUNKS[0], 
                 head: ANATOMY_PARTS.HEADS[0], 
                 appendages: [] 
-            }
+            },
+            bodyParts: [],
+            size: 5 + Math.floor(Math.random() * 5) // Size 5-10
         };
 
         dispatch({ type: 'ADD_MONSTER', payload: newMonster });
@@ -1391,6 +1686,7 @@ export default function App() {
         
         let wildMonster: Monster | undefined = undefined;
         let reward: Partial<Resources> = {};
+        let discoveredEgg: EggType | undefined = undefined;
 
         if (Math.random() < 0.25) {
              const elements = Object.values(ElementType);
@@ -1411,6 +1707,7 @@ export default function App() {
                 element: el,
                 level: 1 + Math.floor(Math.random() * 3), 
                 experience: 0,
+                xp: 0,
                 stats: baseStats,
                 maxHp: 40 + baseStats.defense * 2,
                 currentHp: 40 + baseStats.defense * 2,
@@ -1420,7 +1717,9 @@ export default function App() {
                     trunk: ANATOMY_PARTS.TRUNKS[0], 
                     head: ANATOMY_PARTS.HEADS[0], 
                     appendages: [] 
-                }
+                },
+                bodyParts: [],
+                size: 4 + Math.floor(Math.random() * 6) // Size 4-9
             };
             dispatch({ type: 'ADD_LOG', payload: { message: `ALERT: Wild Lifeform detected in Sector ${hexId}.`, type: 'alert' }});
         } else {
@@ -1430,7 +1729,20 @@ export default function App() {
              dispatch({ type: 'ADD_LOG', payload: { message: event.message, type: 'discovery' }});
         }
 
-        dispatch({ type: 'EXPLORE_HEX', payload: { hexId, reward, wildMonster }});
+        // Check for egg discovery during exploration
+        if (Math.random() < EGG_CONSTANTS.FORAGE_CHANCE) {
+            const elements = Object.values(ElementType);
+            const eggElement = elements[Math.floor(Math.random() * elements.length)];
+            discoveredEgg = {
+                id: Date.now().toString(36) + Math.random().toString(36).substr(2, 9),
+                element: eggElement,
+                discoveredAt: state.day,
+                incubationDays: EGG_CONSTANTS.MIN_INCUBATION_DAYS + Math.floor(Math.random() * (EGG_CONSTANTS.MAX_INCUBATION_DAYS - EGG_CONSTANTS.MIN_INCUBATION_DAYS + 1)),
+                quality: EGG_CONSTANTS.MIN_QUALITY + Math.floor(Math.random() * (EGG_CONSTANTS.MAX_QUALITY - EGG_CONSTANTS.MIN_QUALITY + 1))
+            };
+        }
+
+        dispatch({ type: 'EXPLORE_HEX', payload: { hexId, reward, wildMonster, egg: discoveredEgg }});
         
       } catch (error) {
           dispatch({ type: 'ADD_LOG', payload: { message: "Expedition lost contact.", type: 'alert' }});
@@ -1468,6 +1780,20 @@ export default function App() {
       
       dispatch({ type: 'UPDATE_RESOURCES', payload: { [type]: amount }});
       dispatch({ type: 'ADD_LOG', payload: { message: `Foraged ${amount} ${type} from Sector.`, type: 'info' }});
+      
+      // Check for egg discovery during foraging
+      if (Math.random() < EGG_CONSTANTS.FORAGE_CHANCE) {
+          const elements = Object.values(ElementType);
+          const eggElement = elements[Math.floor(Math.random() * elements.length)];
+          const newEgg: EggType = {
+              id: Date.now().toString(36) + Math.random().toString(36).substr(2, 9),
+              element: eggElement,
+              discoveredAt: state.day,
+              incubationDays: EGG_CONSTANTS.MIN_INCUBATION_DAYS + Math.floor(Math.random() * (EGG_CONSTANTS.MAX_INCUBATION_DAYS - EGG_CONSTANTS.MIN_INCUBATION_DAYS + 1)),
+              quality: EGG_CONSTANTS.MIN_QUALITY + Math.floor(Math.random() * (EGG_CONSTANTS.MAX_QUALITY - EGG_CONSTANTS.MIN_QUALITY + 1))
+          };
+          dispatch({ type: 'DISCOVER_EGG', payload: { egg: newEgg }});
+      }
   };
 
   const handleSabotage = (hexId: string) => {
@@ -1522,6 +1848,118 @@ export default function App() {
       }
 
       dispatch({ type: 'TRAIN_MONSTER', payload: { id, stat, cost }});
+  };
+
+  // --- New XP and Body Part Handlers ---
+  const handleLevelUp = (monsterId: string) => {
+      dispatch({ type: 'SPEND_XP_LEVEL', payload: { monsterId }});
+  };
+
+  const handleEnhanceStat = (monsterId: string, stat: keyof Stats) => {
+      dispatch({ type: 'SPEND_XP_ENHANCE', payload: { monsterId, stat }});
+  };
+
+  const handleAddBodyPart = (monsterId: string, partTemplate: Omit<BodyPart, 'id'>) => {
+      const cost = { mana: COSTS.ADD_BODY_PART };
+      if (state.resources.mana < cost.mana) {
+          dispatch({ type: 'ADD_LOG', payload: { message: `Insufficient Mana to add body part. Need ${cost.mana} Mana.`, type: 'alert' }});
+          return;
+      }
+      
+      const newPart: BodyPart = {
+          ...partTemplate,
+          id: Date.now().toString()
+      };
+      
+      dispatch({ type: 'ADD_BODY_PART', payload: { monsterId, bodyPart: newPart, cost }});
+  };
+
+  const handleRemoveBodyPart = (monsterId: string, bodyPartId: string) => {
+      const cost = { mana: COSTS.REMOVE_BODY_PART };
+      if (state.resources.mana < cost.mana) {
+          dispatch({ type: 'ADD_LOG', payload: { message: `Insufficient Mana to remove body part. Need ${cost.mana} Mana.`, type: 'alert' }});
+          return;
+      }
+      
+      dispatch({ type: 'REMOVE_BODY_PART', payload: { monsterId, bodyPartId, cost }});
+  };
+
+  const handleEnhanceBodyPart = (monsterId: string, bodyPartId: string) => {
+      const cost = { research: COSTS.ENHANCE_BODY_PART };
+      if (state.resources.research < cost.research) {
+          dispatch({ type: 'ADD_LOG', payload: { message: `Insufficient Research to enhance body part. Need ${cost.research} Research.`, type: 'alert' }});
+          return;
+      }
+      
+      dispatch({ type: 'ENHANCE_BODY_PART', payload: { monsterId, bodyPartId, cost }});
+  };
+
+  const handleHatchEgg = async (eggId: string) => {
+      const egg = state.eggs.find(e => e.id === eggId);
+      if (!egg) return;
+
+      const daysSinceDiscovery = state.day - egg.discoveredAt;
+      if (daysSinceDiscovery < egg.incubationDays) {
+          dispatch({ type: 'ADD_LOG', payload: { message: `Egg needs ${egg.incubationDays - daysSinceDiscovery} more days to incubate.`, type: 'alert' }});
+          return;
+      }
+
+      if (state.resources.biomass < COSTS.INCUBATE_EGG) {
+          dispatch({ type: 'ADD_LOG', payload: { message: `Insufficient Biomass to hatch egg. Need ${COSTS.INCUBATE_EGG} Biomass.`, type: 'alert' }});
+          return;
+      }
+
+      setIsProcessing(true);
+      dispatch({ type: 'UPDATE_RESOURCES', payload: { biomass: -COSTS.INCUBATE_EGG }});
+
+      try {
+          // Quality affects stats
+          const qualityBonus = Math.floor(egg.quality / 10);
+          
+          const baseStats: Stats = {
+              attack: 12 + Math.floor(Math.random() * 8) + qualityBonus,
+              defense: 12 + Math.floor(Math.random() * 8) + qualityBonus,
+              speed: 12 + Math.floor(Math.random() * 8) + qualityBonus,
+              intelligence: 12 + Math.floor(Math.random() * 8) + qualityBonus,
+          };
+
+          if (egg.element === ElementType.PYRO) baseStats.attack += 8;
+          if (egg.element === ElementType.GEO) baseStats.defense += 8;
+          if (egg.element === ElementType.AERO) baseStats.speed += 8;
+          if (egg.element === ElementType.CHRONO) baseStats.intelligence += 8;
+
+          const lore = await GeminiService.generateMonsterLore(egg.element, baseStats);
+
+          const newMonster: Monster = {
+              id: Date.now().toString(36) + Math.random().toString(36).substr(2, 9),
+              name: lore.name,
+              description: `Hatched from a wild egg. ${lore.description}`,
+              element: egg.element,
+              level: 1,
+              experience: 0,
+              xp: 0,
+              stats: baseStats,
+              // Egg-hatched monsters get 55 base HP (+5 compared to 50 base HP that synthesized monsters receive)
+              maxHp: 55 + baseStats.defense * 2,
+              currentHp: 55 + baseStats.defense * 2,
+              dnaQuality: egg.quality,
+              traits: ['Wild-Born', ...lore.traits],
+              anatomy: lore.anatomy || { 
+                  trunk: ANATOMY_PARTS.TRUNKS[0], 
+                  head: ANATOMY_PARTS.HEADS[0], 
+                  appendages: [] 
+              },
+              bodyParts: [],
+              size: 5 + Math.floor(egg.quality / 20) // Size 5-10 based on quality
+          };
+
+          dispatch({ type: 'HATCH_EGG', payload: { eggId, monster: newMonster }});
+      } catch (error) {
+          console.error("Hatch failed", error);
+          dispatch({ type: 'ADD_LOG', payload: { message: "Incubation failure. Egg lost.", type: 'alert' }});
+      } finally {
+          setIsProcessing(false);
+      }
   };
 
   const handleHire = (role: 'Scientist' | 'Trainer' | 'Explorer' | 'Beast Master') => {
@@ -1627,6 +2065,17 @@ export default function App() {
       const elements = Object.values(ElementType);
       const el = elements[Math.floor(Math.random() * elements.length)];
       
+      // Create some random body parts for the opponent
+      const numBodyParts = Math.min(match.round, 3);
+      const opponentBodyParts: BodyPart[] = [];
+      for (let i = 0; i < numBodyParts; i++) {
+          const randomPart = BODY_PARTS_CATALOG[Math.floor(Math.random() * BODY_PARTS_CATALOG.length)];
+          opponentBodyParts.push({
+              ...randomPart,
+              id: `bp-${Date.now()}-${i}`
+          });
+      }
+      
       const opponent: Monster = {
         id: 'rival-mon-' + Date.now(),
         name: match.p2.monsterName || 'Unknown Beast',
@@ -1634,6 +2083,7 @@ export default function App() {
         element: el,
         level: targetLevel,
         experience: 0,
+        xp: 0,
         stats: { 
             attack: 15 + (targetLevel * 2), 
             defense: 15 + (targetLevel * 2), 
@@ -1648,7 +2098,9 @@ export default function App() {
             trunk: ANATOMY_PARTS.TRUNKS[Math.floor(Math.random() * ANATOMY_PARTS.TRUNKS.length)],
             head: ANATOMY_PARTS.HEADS[Math.floor(Math.random() * ANATOMY_PARTS.HEADS.length)],
             appendages: [ANATOMY_PARTS.APPENDAGES[Math.floor(Math.random() * ANATOMY_PARTS.APPENDAGES.length)]]
-        }
+        },
+        bodyParts: opponentBodyParts,
+        size: 5 + match.round
       };
 
       setSelectedFighterId(null);
@@ -2621,7 +3073,64 @@ export default function App() {
                 <h2 className="text-3xl font-orbitron mb-6 flex items-center gap-2">
                     <TestTube className="text-teal-400" /> Bio-Synthesis Lab
                 </h2>
-                {/* ... (Lab content existing) ... */}
+                
+                {/* Egg Incubation Section */}
+                {state.eggs.length > 0 && (
+                    <div className="mb-8">
+                        <h3 className="text-xl font-orbitron mb-4 text-yellow-400 border-b border-slate-800 pb-2 flex items-center gap-2">
+                            <Egg size={20} /> Egg Incubation Chamber
+                        </h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                            {state.eggs.map(egg => {
+                                const daysSinceDiscovery = state.day - egg.discoveredAt;
+                                const isReady = daysSinceDiscovery >= egg.incubationDays;
+                                const daysRemaining = egg.incubationDays - daysSinceDiscovery;
+                                
+                                return (
+                                    <div key={egg.id} className={`bg-slate-900 border-2 rounded-xl p-4 ${ELEMENT_COLORS[egg.element]} bg-opacity-10 border-opacity-30`}>
+                                        <div className="flex justify-between items-start mb-2">
+                                            <span className={`text-xs font-bold uppercase ${ELEMENT_COLORS[egg.element].split(' ')[0]}`}>{egg.element} Egg</span>
+                                            <span className="text-xs text-slate-400">Q: {egg.quality}%</span>
+                                        </div>
+                                        
+                                        <div className="h-16 bg-slate-800 rounded-lg mb-3 flex items-center justify-center">
+                                            <Egg size={32} className={isReady ? 'text-yellow-400 animate-pulse' : 'text-slate-500'} />
+                                        </div>
+                                        
+                                        <div className="mb-3">
+                                            <div className="flex justify-between text-xs text-slate-400 mb-1">
+                                                <span>Incubation</span>
+                                                <span>{isReady ? 'Ready!' : `${daysRemaining} days left`}</span>
+                                            </div>
+                                            <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+                                                <div 
+                                                    className={`h-full transition-all ${isReady ? 'bg-yellow-500' : 'bg-teal-500'}`}
+                                                    style={{ width: `${Math.min((daysSinceDiscovery / egg.incubationDays) * 100, 100)}%` }}
+                                                />
+                                            </div>
+                                        </div>
+                                        
+                                        <button 
+                                            onClick={() => handleHatchEgg(egg.id)}
+                                            disabled={!isReady || isProcessing}
+                                            className={`w-full py-2 font-bold rounded text-sm flex items-center justify-center gap-2 ${
+                                                isReady 
+                                                    ? 'bg-yellow-600 hover:bg-yellow-500 text-black' 
+                                                    : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                                            }`}
+                                        >
+                                            {isProcessing ? <Activity className="animate-spin" size={14} /> : <Dna size={14} />}
+                                            {isReady ? `Hatch (${COSTS.INCUBATE_EGG} Bio)` : 'Not Ready'}
+                                        </button>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                )}
+                
+                {/* Cloning Section */}
+                <h3 className="text-xl font-orbitron mb-4 text-teal-400 border-b border-slate-800 pb-2">Synthesis Chambers</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
                      {Object.values(ElementType).map((el) => (
                          <div key={el} className={`bg-slate-900 border-2 rounded-xl p-6 relative overflow-hidden group ${ELEMENT_COLORS[el]} bg-opacity-10 border-opacity-30 hover:border-opacity-80 transition-all`}>
@@ -2650,16 +3159,127 @@ export default function App() {
                      ))}
                 </div>
 
+                {/* Body Part Grafting Section */}
+                {state.monsters.length > 0 && (
+                    <div className="mb-8">
+                        <h3 className="text-xl font-orbitron mb-4 text-purple-400 border-b border-slate-800 pb-2 flex items-center gap-2">
+                            <Wrench size={20} /> Body Part Grafting Lab
+                        </h3>
+                        <p className="text-sm text-slate-400 mb-4">
+                            Enhance your chimeras with synthetic body parts. Parts add stats but increase weight. 
+                            Exceeding weight capacity reduces speed.
+                        </p>
+                        
+                        {/* Part Selection */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            {/* Available Parts Catalog */}
+                            <div className="bg-slate-900 border border-slate-700 rounded-xl p-4">
+                                <h4 className="font-bold text-slate-300 mb-3">Available Parts ({COSTS.ADD_BODY_PART} Mana each)</h4>
+                                <div className="space-y-2 max-h-64 overflow-y-auto">
+                                    {BODY_PARTS_CATALOG.map((part) => (
+                                        <div key={`${part.name}-${part.material}`} className="bg-slate-800 p-2 rounded flex justify-between items-center group hover:bg-slate-700">
+                                            <div>
+                                                <span className="text-sm font-bold text-slate-200">{part.name}</span>
+                                                <div className="flex gap-2 text-[10px] text-slate-400">
+                                                    <span className="capitalize">{part.category}</span>
+                                                    <span>{part.material}</span>
+                                                    <span>Wt: {part.weight}</span>
+                                                </div>
+                                                <div className="flex gap-1 mt-1">
+                                                    {Object.entries(part.statBonus).map(([stat, value]) => (
+                                                        value !== 0 && (
+                                                            <span key={stat} className={`text-[9px] px-1 rounded ${(value || 0) > 0 ? 'bg-green-900/50 text-green-300' : 'bg-red-900/50 text-red-300'}`}>
+                                                                {(value || 0) > 0 ? '+' : ''}{value} {stat.substring(0, 3).toUpperCase()}
+                                                            </span>
+                                                        )
+                                                    ))}
+                                                </div>
+                                            </div>
+                                            <select 
+                                                className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+                                                defaultValue=""
+                                                onChange={(e) => {
+                                                    if (e.target.value) {
+                                                        handleAddBodyPart(e.target.value, part);
+                                                        e.target.value = "";
+                                                    }
+                                                }}
+                                            >
+                                                <option value="">Add to...</option>
+                                                {state.monsters.map(m => (
+                                                    <option key={m.id} value={m.id}>{m.name}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                            
+                            {/* Chimera Part Management */}
+                            <div className="bg-slate-900 border border-slate-700 rounded-xl p-4">
+                                <h4 className="font-bold text-slate-300 mb-3">Manage Chimera Parts</h4>
+                                <div className="space-y-3 max-h-64 overflow-y-auto">
+                                    {state.monsters.map(m => (
+                                        <div key={m.id} className="bg-slate-800 p-3 rounded">
+                                            <div className="flex justify-between items-center mb-2">
+                                                <span className="font-bold text-slate-200">{m.name}</span>
+                                                <span className={`text-xs ${(m.bodyParts?.reduce((a, p) => a + p.weight, 0) || 0) > ((m.size || 5) * BODY_PART_WEIGHT.MAX_WEIGHT_PER_SIZE) ? 'text-red-400' : 'text-slate-400'}`}>
+                                                    Wt: {m.bodyParts?.reduce((a, p) => a + p.weight, 0) || 0}/{(m.size || 5) * BODY_PART_WEIGHT.MAX_WEIGHT_PER_SIZE}
+                                                </span>
+                                            </div>
+                                            {(!m.bodyParts || m.bodyParts.length === 0) ? (
+                                                <p className="text-xs text-slate-500 italic">No parts equipped</p>
+                                            ) : (
+                                                <div className="space-y-1">
+                                                    {m.bodyParts.map(part => (
+                                                        <div key={part.id} className="flex justify-between items-center bg-slate-900/50 px-2 py-1 rounded text-xs">
+                                                            <span className="text-slate-300">{part.name}</span>
+                                                            <div className="flex gap-1">
+                                                                <button 
+                                                                    onClick={() => handleEnhanceBodyPart(m.id, part.id)}
+                                                                    className="px-1.5 py-0.5 bg-purple-900/50 hover:bg-purple-800 text-purple-300 rounded"
+                                                                    title={`Enhance (${COSTS.ENHANCE_BODY_PART} Research)`}
+                                                                >
+                                                                    <Star size={10} />
+                                                                </button>
+                                                                <button 
+                                                                    onClick={() => handleRemoveBodyPart(m.id, part.id)}
+                                                                    className="px-1.5 py-0.5 bg-red-900/50 hover:bg-red-800 text-red-300 rounded"
+                                                                    title={`Remove (${COSTS.REMOVE_BODY_PART} Mana)`}
+                                                                >
+                                                                    <X size={10} />
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 <h3 className="text-xl font-orbitron mb-4 text-slate-300 border-b border-slate-800 pb-2">Active Test Subjects</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                     {state.monsters.map(m => (
                         <div key={m.id} className="h-full">
-                            <MonsterCard monster={m} canTrain={true} onTrain={handleTrain} trainingCosts={{
-                                attack: calculateTrainingCost(m, 'attack'),
-                                defense: calculateTrainingCost(m, 'defense'),
-                                speed: calculateTrainingCost(m, 'speed'),
-                                intelligence: calculateTrainingCost(m, 'intelligence')
-                            }}/>
+                            <MonsterCard 
+                                monster={m} 
+                                canTrain={true} 
+                                onTrain={handleTrain} 
+                                onLevelUp={handleLevelUp}
+                                onEnhance={handleEnhanceStat}
+                                showXpActions={true}
+                                trainingCosts={{
+                                    attack: calculateTrainingCost(m, 'attack'),
+                                    defense: calculateTrainingCost(m, 'defense'),
+                                    speed: calculateTrainingCost(m, 'speed'),
+                                    intelligence: calculateTrainingCost(m, 'intelligence')
+                                }}
+                            />
                         </div>
                     ))}
                      {state.monsters.length === 0 && <p className="text-slate-500 italic">No specimens in containment.</p>}

@@ -37,19 +37,44 @@ export interface Buff {
   description: string;
 }
 
+export type BodyPartMaterial = 'Organic' | 'Metallic' | 'Crystalline' | 'Ethereal' | 'Composite';
+export type BodyPartCategory = 'offense' | 'defense' | 'mobility' | 'special';
+
+export interface BodyPart {
+  id: string;
+  name: string;
+  category: BodyPartCategory;
+  material: BodyPartMaterial;
+  element?: ElementType;
+  weight: number; // Affects speed if too many parts
+  statBonus: Partial<Stats>;
+  description: string;
+}
+
+export interface Egg {
+  id: string;
+  element: ElementType;
+  discoveredAt: number; // Day discovered
+  incubationDays: number; // Days needed to hatch
+  quality: number; // 0-100, affects hatched monster stats
+}
+
 export interface Monster {
   id: string;
   name: string;
   description: string;
   element: ElementType;
   level: number;
-  experience: number;
+  experience: number; // Legacy field - tracks total experience gained from training
+  xp: number; // Spendable XP for leveling up and stat enhancements
   stats: Stats;
   maxHp: number;
   currentHp: number;
   dnaQuality: number; // 0-100, affects growth
   traits: string[];
   anatomy: Anatomy;
+  bodyParts: BodyPart[]; // Equipped body parts
+  size?: number; // Base size, determines max weight capacity (defaults to 5)
   imageUrl?: string; // Placeholder or generated
   activeBuffs?: Buff[];
 }
@@ -200,6 +225,7 @@ export interface GameState {
   resources: Resources;
   monsters: Monster[];
   wildMonsters: Monster[]; // Monsters on the map not owned by player
+  eggs: Egg[]; // Eggs discovered from foraging, can be incubated
   buildings: Building[];
   staff: Staff[];
   logs: LogEntry[];
