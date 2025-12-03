@@ -1266,10 +1266,18 @@ const gameReducer = (state: GameState, action: Action): GameState => {
                         ...m,
                         bodyParts: (m.bodyParts || []).map(p => {
                             if (p.id === action.payload.bodyPartId) {
-                                // Enhance all stat bonuses by 50%
+                                // Enhance all stat bonuses by 50%, with minimum +1 improvement
                                 const enhancedBonus: Partial<Stats> = {};
                                 (Object.keys(p.statBonus) as (keyof Stats)[]).forEach(stat => {
-                                    enhancedBonus[stat] = Math.floor((p.statBonus[stat] || 0) * 1.5);
+                                    const currentValue = p.statBonus[stat] || 0;
+                                    if (currentValue > 0) {
+                                        enhancedBonus[stat] = Math.max(currentValue + 1, Math.floor(currentValue * 1.5));
+                                    } else if (currentValue < 0) {
+                                        // Reduce penalties by 25% (make them less severe)
+                                        enhancedBonus[stat] = Math.ceil(currentValue * 0.75);
+                                    } else {
+                                        enhancedBonus[stat] = 0;
+                                    }
                                 });
                                 return { ...p, statBonus: enhancedBonus };
                             }
@@ -1927,6 +1935,7 @@ export default function App() {
               experience: 0,
               xp: 0,
               stats: baseStats,
+              // Egg-hatched monsters get +5 base HP as bonus for incubation investment
               maxHp: 55 + baseStats.defense * 2,
               currentHp: 55 + baseStats.defense * 2,
               dnaQuality: egg.quality,

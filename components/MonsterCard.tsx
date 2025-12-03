@@ -39,7 +39,7 @@ const StatBar: React.FC<{ icon: React.ReactNode; label: string; value: number; m
   </div>
 );
 
-// Helper functions
+// Helper functions (Note: These are also defined in App.tsx for reducer use)
 const calculateMonsterWeight = (monster: Monster): number => {
     return monster.bodyParts?.reduce((acc, part) => acc + part.weight, 0) || 0;
 };

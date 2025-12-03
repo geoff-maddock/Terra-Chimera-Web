@@ -1,7 +1,7 @@
 
 import React from 'react';
-import { X, Globe, DollarSign, Zap, Leaf, Microscope, Map as MapIcon, Dna, Swords, Users } from 'lucide-react';
-import { COSTS, REFUND_RATE } from '../constants';
+import { X, Globe, DollarSign, Zap, Leaf, Microscope, Map as MapIcon, Dna, Swords, Users, Egg, Star, Wrench } from 'lucide-react';
+import { COSTS, REFUND_RATE, XP_CONSTANTS, EGG_CONSTANTS, BODY_PART_WEIGHT } from '../constants';
 
 interface RulesModalProps {
   onClose: () => void;
@@ -27,7 +27,7 @@ const RulesModal: React.FC<RulesModalProps> = ({ onClose }) => {
         <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-950">
           <div>
             <h2 className="text-3xl font-orbitron text-white tracking-wider">Mission Briefing</h2>
-            <p className="text-teal-500 font-mono text-xs uppercase">TerraChimera Operations Manual v1.0</p>
+            <p className="text-teal-500 font-mono text-xs uppercase">TerraChimera Operations Manual v2.0</p>
           </div>
           <button 
             onClick={onClose}
@@ -89,6 +89,10 @@ const RulesModal: React.FC<RulesModalProps> = ({ onClose }) => {
                 <strong className="text-slate-200">Build:</strong> You can only construct facilities on territory you own.
               </li>
               <li>
+                <strong className="text-slate-200">Forage:</strong> Search explored territory for resources and potentially discover eggs!
+                <br/><em>Egg Discovery Chance: {EGG_CONSTANTS.FORAGE_CHANCE * 100}%</em>
+              </li>
+              <li>
                 <strong className="text-slate-200">Sabotage:</strong> You can pay to neutralize a rival's territory, destroying their building and resetting ownership.
               </li>
             </ol>
@@ -104,6 +108,45 @@ const RulesModal: React.FC<RulesModalProps> = ({ onClose }) => {
             </p>
           </Section>
 
+          <Section title="Eggs & Incubation" icon={<Egg />}>
+            <p>
+              Wild eggs can be discovered during <strong>Foraging</strong> or <strong>Exploration</strong>. Each egg has an element, quality rating, and incubation period.
+            </p>
+            <ul className="list-disc pl-5 mt-2 space-y-1 text-slate-400">
+              <li><strong className="text-white">Discovery:</strong> {EGG_CONSTANTS.FORAGE_CHANCE * 100}% chance when foraging.</li>
+              <li><strong className="text-white">Incubation:</strong> Eggs require {EGG_CONSTANTS.MIN_INCUBATION_DAYS}-{EGG_CONSTANTS.MAX_INCUBATION_DAYS} days before hatching.</li>
+              <li><strong className="text-white">Quality:</strong> Higher quality eggs (up to {EGG_CONSTANTS.MAX_QUALITY}%) produce stronger chimeras.</li>
+              <li><strong className="text-white">Hatching Cost:</strong> {COSTS.INCUBATE_EGG} Biomass.</li>
+            </ul>
+          </Section>
+
+          <Section title="XP & Progression" icon={<Star />}>
+            <p>
+              Chimeras gain <strong>XP (Experience Points)</strong> from tournament battles. XP can be spent on leveling up or enhancing specific stats.
+            </p>
+            <ul className="list-disc pl-5 mt-2 space-y-1 text-slate-400">
+              <li><strong className="text-white">Winning:</strong> +{XP_CONSTANTS.WIN_BASE} XP base (+{XP_CONSTANTS.LEVEL_BONUS} per opponent level)</li>
+              <li><strong className="text-white">Losing:</strong> +{XP_CONSTANTS.LOSS_BASE} XP consolation</li>
+              <li><strong className="text-white">Level Up:</strong> Costs {XP_CONSTANTS.XP_PER_LEVEL} × Current Level XP. Increases all stats and HP.</li>
+              <li><strong className="text-white">Stat Enhancement:</strong> Spend {XP_CONSTANTS.ENHANCEMENT_COST} XP to boost a single stat by 3.</li>
+            </ul>
+          </Section>
+
+          <Section title="Body Parts & Grafting" icon={<Wrench />}>
+            <p>
+              In the <strong>Grafting Lab</strong>, you can augment your chimeras with synthetic body parts. Each part has a material type, stat bonuses, and weight.
+            </p>
+            <ul className="list-disc pl-5 mt-2 space-y-1 text-slate-400">
+              <li><strong className="text-white">Categories:</strong> Offense, Defense, Mobility, Special</li>
+              <li><strong className="text-white">Materials:</strong> Organic, Metallic, Crystalline, Ethereal, Composite (each has combat advantages against others)</li>
+              <li><strong className="text-white">Weight System:</strong> Max Weight = Size × {BODY_PART_WEIGHT.MAX_WEIGHT_PER_SIZE}. Exceeding this reduces Speed by {BODY_PART_WEIGHT.SPEED_PENALTY_PER_EXCESS} per excess weight.</li>
+              <li><strong className="text-white">Costs:</strong> Add ({COSTS.ADD_BODY_PART} Mana), Remove ({COSTS.REMOVE_BODY_PART} Mana), Enhance ({COSTS.ENHANCE_BODY_PART} Research)</li>
+            </ul>
+            <p className="mt-2 text-xs italic text-slate-500">
+              Tip: Elemental body parts that match your chimera's element provide a +5% damage bonus per part!
+            </p>
+          </Section>
+
           <Section title="Staff & Management" icon={<Users />}>
             <p>
               Your HQ allows you to hire specialized personnel. Staff require a salary, which is deducted from your Credits every tick.
@@ -111,7 +154,8 @@ const RulesModal: React.FC<RulesModalProps> = ({ onClose }) => {
             <ul className="list-disc pl-5 mt-2 space-y-1 text-slate-400">
               <li><strong className="text-white">Explorers:</strong> Reduce the cost of exploring new hexes.</li>
               <li><strong className="text-white">Scientists:</strong> Generate passive Research points.</li>
-              <li><strong className="text-white">Trainers:</strong> (Coming Soon) Provide passive XP to monsters.</li>
+              <li><strong className="text-white">Trainers:</strong> Reduce training costs for your chimeras.</li>
+              <li><strong className="text-white">Beast Masters:</strong> Increase capture chance for wild monsters.</li>
             </ul>
             <p className="mt-2 text-xs italic text-slate-500">
               Tip: If your expenses exceed your income, you may need to Dismiss staff or Demolish buildings ({REFUND_RATE * 100}% refund) to stay afloat.
@@ -121,9 +165,15 @@ const RulesModal: React.FC<RulesModalProps> = ({ onClose }) => {
           <Section title="Combat" icon={<Swords />}>
             <p>
               Some sectors contain <strong>Tournaments</strong>. Moving into these sectors allows you to enter the Arena. 
-              Battles compare your monster's stats (Attack vs Defense, Speed modifiers) against an opponent. 
-              Victories yield Credit rewards.
+              Battles compare your monster's stats (Attack vs Defense, Speed modifiers) against an opponent.
             </p>
+            <ul className="list-disc pl-5 mt-2 space-y-1 text-slate-400">
+              <li><strong className="text-white">Elemental Advantages:</strong> Elements are strong/weak against each other (1.5x damage)</li>
+              <li><strong className="text-white">Material Effectiveness:</strong> Body part materials have advantages against other materials</li>
+              <li><strong className="text-white">Body Part Synergy:</strong> Parts matching your element boost damage by 5% each</li>
+              <li><strong className="text-white">Speed:</strong> Faster chimeras attack first; weight penalties reduce speed</li>
+              <li><strong className="text-white">Rewards:</strong> Credits, XP, and potentially Trophies from tournament victories</li>
+            </ul>
           </Section>
 
         </div>

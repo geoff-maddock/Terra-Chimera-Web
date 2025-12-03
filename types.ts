@@ -65,8 +65,8 @@ export interface Monster {
   description: string;
   element: ElementType;
   level: number;
-  experience: number;
-  xp: number; // New XP stat for progression
+  experience: number; // Legacy field - tracks total experience gained from training
+  xp: number; // Spendable XP for leveling up and stat enhancements
   stats: Stats;
   maxHp: number;
   currentHp: number;
