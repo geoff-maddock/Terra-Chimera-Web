@@ -170,7 +170,7 @@ const calculateMonsterWeight = (monster: Monster): number => {
 
 // --- Helper: Get Max Weight for Monster ---
 const getMaxWeight = (monster: Monster): number => {
-    return monster.size * BODY_PART_WEIGHT.MAX_WEIGHT_PER_SIZE;
+    return (monster.size || 5) * BODY_PART_WEIGHT.MAX_WEIGHT_PER_SIZE;
 };
 
 // --- Helper: Calculate Weight Penalty ---
@@ -187,7 +187,7 @@ const getXpForLevel = (level: number): number => {
 };
 
 // --- Helper Logic for Battle ---
-const calculateDamage = (attacker: Monster, defender: Monster): { damage: number; isCrit: boolean; isEffective: boolean; materialBonus: boolean; message: string } => {
+const calculateDamage = (attacker: Monster, defender: Monster): { damage: number; isCrit: boolean; isEffective: boolean; materialBonus: boolean; materialPenalty: boolean; message: string } => {
     // 1. Base Damage
     // Apply Buffs
     const getBuff = (m: Monster, stat: keyof Stats) => m.activeBuffs?.filter(b => b.stat === stat).reduce((a,b) => a + b.value, 0) || 0;
@@ -213,6 +213,7 @@ const calculateDamage = (attacker: Monster, defender: Monster): { damage: number
 
     // 3. Body Part Material Effectiveness
     let materialBonus = false;
+    let materialPenalty = false;
     const attackerOffenseParts = attacker.bodyParts?.filter(p => p.category === 'offense') || [];
     const defenderDefenseParts = defender.bodyParts?.filter(p => p.category === 'defense') || [];
     
@@ -234,6 +235,7 @@ const calculateDamage = (attacker: Monster, defender: Monster): { damage: number
             materialBonus = true;
         } else if (avgEffectiveness < 0.95) {
             baseDmg *= avgEffectiveness;
+            materialPenalty = true;
         }
     }
 
@@ -265,7 +267,7 @@ const calculateDamage = (attacker: Monster, defender: Monster): { damage: number
     const variance = (Math.random() * 0.2) + 0.9; // 0.9 to 1.1
     const finalDmg = Math.floor(baseDmg * variance);
 
-    return { damage: finalDmg, isCrit, isEffective, materialBonus, message: anatomyMsg };
+    return { damage: finalDmg, isCrit, isEffective, materialBonus, materialPenalty, message: anatomyMsg };
 };
 
 // --- Tournament Generation Logic ---
@@ -877,6 +879,7 @@ const gameReducer = (state: GameState, action: Action): GameState => {
         if (hit1.isCrit) logs.push({ round: state.battle.round, message: "Critical Hit!", type: 'info' });
         if (hit1.isEffective) logs.push({ round: state.battle.round, message: "Super Effective!", type: 'info' });
         if (hit1.materialBonus) logs.push({ round: state.battle.round, message: "Material Advantage!", type: 'effect' });
+        if (hit1.materialPenalty) logs.push({ round: state.battle.round, message: "Material Disadvantage!", type: 'effect' });
 
         // Check Death Turn 1
         if (hpAfterHit1 <= 0) {
@@ -912,6 +915,7 @@ const gameReducer = (state: GameState, action: Action): GameState => {
         if (hit2.isCrit) logs.push({ round: state.battle.round, message: "Critical Hit!", type: 'info' });
         if (hit2.isEffective) logs.push({ round: state.battle.round, message: "Super Effective!", type: 'info' });
         if (hit2.materialBonus) logs.push({ round: state.battle.round, message: "Material Advantage!", type: 'effect' });
+        if (hit2.materialPenalty) logs.push({ round: state.battle.round, message: "Material Disadvantage!", type: 'effect' });
 
         // Check Death Turn 2
         if (hpAfterHit2 <= 0) {
@@ -956,7 +960,7 @@ const gameReducer = (state: GameState, action: Action): GameState => {
         const opponentLevel = state.battle.opponentMonster?.level || 1;
         const xpGained = action.payload.won 
             ? XP_CONSTANTS.WIN_BASE + (opponentLevel * XP_CONSTANTS.LEVEL_BONUS)
-            : XP_CONSTANTS.LOSS_BASE + Math.floor((opponentLevel * XP_CONSTANTS.LEVEL_BONUS) / 2);
+            : XP_CONSTANTS.LOSS_BASE;
 
         // Remove buffs from player monster AND add XP
         const resetMonsters = state.monsters.map(m => {
@@ -965,7 +969,7 @@ const gameReducer = (state: GameState, action: Action): GameState => {
                     ...m, 
                     activeBuffs: [],
                     xp: (m.xp || 0) + xpGained,
-                    experience: m.experience + xpGained
+                    experience: (m.experience || 0) + xpGained
                 };
             }
             return m;
@@ -1730,7 +1734,7 @@ export default function App() {
             const elements = Object.values(ElementType);
             const eggElement = elements[Math.floor(Math.random() * elements.length)];
             discoveredEgg = {
-                id: Math.random().toString(36).substr(2, 9),
+                id: Date.now().toString(36) + Math.random().toString(36).substr(2, 9),
                 element: eggElement,
                 discoveredAt: state.day,
                 incubationDays: EGG_CONSTANTS.MIN_INCUBATION_DAYS + Math.floor(Math.random() * (EGG_CONSTANTS.MAX_INCUBATION_DAYS - EGG_CONSTANTS.MIN_INCUBATION_DAYS + 1)),
@@ -1782,7 +1786,7 @@ export default function App() {
           const elements = Object.values(ElementType);
           const eggElement = elements[Math.floor(Math.random() * elements.length)];
           const newEgg: EggType = {
-              id: Math.random().toString(36).substr(2, 9),
+              id: Date.now().toString(36) + Math.random().toString(36).substr(2, 9),
               element: eggElement,
               discoveredAt: state.day,
               incubationDays: EGG_CONSTANTS.MIN_INCUBATION_DAYS + Math.floor(Math.random() * (EGG_CONSTANTS.MAX_INCUBATION_DAYS - EGG_CONSTANTS.MIN_INCUBATION_DAYS + 1)),
@@ -1927,7 +1931,7 @@ export default function App() {
           const lore = await GeminiService.generateMonsterLore(egg.element, baseStats);
 
           const newMonster: Monster = {
-              id: Math.random().toString(36).substr(2, 9),
+              id: Date.now().toString(36) + Math.random().toString(36).substr(2, 9),
               name: lore.name,
               description: `Hatched from a wild egg. ${lore.description}`,
               element: egg.element,
@@ -1935,7 +1939,7 @@ export default function App() {
               experience: 0,
               xp: 0,
               stats: baseStats,
-              // Egg-hatched monsters get +5 base HP as bonus for incubation investment
+              // Egg-hatched monsters get 55 base HP (+5 compared to 50 base HP that synthesized monsters receive)
               maxHp: 55 + baseStats.defense * 2,
               currentHp: 55 + baseStats.defense * 2,
               dnaQuality: egg.quality,
@@ -1946,7 +1950,7 @@ export default function App() {
                   appendages: [] 
               },
               bodyParts: [],
-              size: 4 + Math.floor(egg.quality / 20) // Size 4-9 based on quality
+              size: 5 + Math.floor(egg.quality / 20) // Size 5-10 based on quality
           };
 
           dispatch({ type: 'HATCH_EGG', payload: { eggId, monster: newMonster }});
@@ -3172,8 +3176,8 @@ export default function App() {
                             <div className="bg-slate-900 border border-slate-700 rounded-xl p-4">
                                 <h4 className="font-bold text-slate-300 mb-3">Available Parts ({COSTS.ADD_BODY_PART} Mana each)</h4>
                                 <div className="space-y-2 max-h-64 overflow-y-auto">
-                                    {BODY_PARTS_CATALOG.map((part, i) => (
-                                        <div key={i} className="bg-slate-800 p-2 rounded flex justify-between items-center group hover:bg-slate-700">
+                                    {BODY_PARTS_CATALOG.map((part) => (
+                                        <div key={`${part.name}-${part.material}`} className="bg-slate-800 p-2 rounded flex justify-between items-center group hover:bg-slate-700">
                                             <div>
                                                 <span className="text-sm font-bold text-slate-200">{part.name}</span>
                                                 <div className="flex gap-2 text-[10px] text-slate-400">

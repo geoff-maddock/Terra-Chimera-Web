@@ -74,7 +74,7 @@ export interface Monster {
   traits: string[];
   anatomy: Anatomy;
   bodyParts: BodyPart[]; // Equipped body parts
-  size: number; // Base size, determines max weight capacity
+  size?: number; // Base size, determines max weight capacity (defaults to 5)
   imageUrl?: string; // Placeholder or generated
   activeBuffs?: Buff[];
 }

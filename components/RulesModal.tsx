@@ -127,7 +127,7 @@ const RulesModal: React.FC<RulesModalProps> = ({ onClose }) => {
             <ul className="list-disc pl-5 mt-2 space-y-1 text-slate-400">
               <li><strong className="text-white">Winning:</strong> +{XP_CONSTANTS.WIN_BASE} XP base (+{XP_CONSTANTS.LEVEL_BONUS} per opponent level)</li>
               <li><strong className="text-white">Losing:</strong> +{XP_CONSTANTS.LOSS_BASE} XP consolation</li>
-              <li><strong className="text-white">Level Up:</strong> Costs {XP_CONSTANTS.XP_PER_LEVEL} × Current Level XP. Increases all stats and HP.</li>
+              <li><strong className="text-white">Level Up:</strong> Costs {XP_CONSTANTS.XP_PER_LEVEL} × (Current Level + 1) XP. Increases all stats and HP.</li>
               <li><strong className="text-white">Stat Enhancement:</strong> Spend {XP_CONSTANTS.ENHANCEMENT_COST} XP to boost a single stat by 3.</li>
             </ul>
           </Section>

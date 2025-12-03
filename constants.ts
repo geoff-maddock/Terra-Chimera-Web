@@ -1,5 +1,5 @@
 
-import { BiomeType, Building, ElementType, FactionId, Resources, Stats, Spell, Trophy, BodyPart, BodyPartMaterial, BodyPartCategory } from "./types";
+import { BiomeType, Building, ElementType, FactionId, Resources, Stats, Spell, Trophy, BodyPart, BodyPartMaterial } from "./types";
 
 export const INITIAL_RESOURCES: Resources = {
   credits: 500,
@@ -53,7 +53,7 @@ export const XP_CONSTANTS = {
   LOSS_BASE: 25, // Base XP for losing a battle
   LEVEL_BONUS: 10, // Additional XP per opponent level
   XP_PER_LEVEL: 100, // XP required per level (level * XP_PER_LEVEL)
-  ENHANCEMENT_COST: 50, // XP cost to enhance a stat by 1
+  ENHANCEMENT_COST: 50, // XP cost to enhance a stat by 3
 };
 
 // --- Egg Constants ---

@@ -1,8 +1,8 @@
 
 import React, { useState } from 'react';
-import { Monster, Stats, Resources, BodyPart } from '../types';
+import { Monster, Stats, Resources } from '../types';
 import { ELEMENT_COLORS, BODY_PART_WEIGHT, XP_CONSTANTS } from '../constants';
-import { Heart, Shield, Sword, Brain, Activity, Dna, Sparkles, Leaf, Zap, Star, Weight, Wrench } from 'lucide-react';
+import { Heart, Shield, Sword, Brain, Activity, Dna, Sparkles, Leaf, Zap, Star, Wrench, Scale } from 'lucide-react';
 
 interface MonsterCardProps {
   monster: Monster;
@@ -118,7 +118,7 @@ const MonsterCard: React.FC<MonsterCardProps> = ({ monster, onTrain, canTrain, t
          {/* Weight indicator */}
          {(monster.bodyParts?.length || 0) > 0 && (
              <div className={`absolute bottom-2 left-2 text-[10px] px-1.5 py-0.5 rounded backdrop-blur-md flex items-center gap-1 ${isOverweight ? 'bg-red-500/50 border border-red-400 text-red-200' : 'bg-slate-800/50 border border-slate-600 text-slate-300'}`}>
-                 <Wrench size={8} /> {currentWeight}/{maxWeight}
+                 <Scale size={8} /> {currentWeight}/{maxWeight}
              </div>
          )}
       </div>
